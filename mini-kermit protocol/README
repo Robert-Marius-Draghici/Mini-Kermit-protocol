@@ -1,0 +1,131 @@
+Tema 1 Protocoale de comunicatie
+Draghici Marius Robert, 325CD
+================================================================================
+	Functii auxiliare:
+	
+	Tipurile de pachete specifice protocolului Kermit au o serie de elemente
+comune, ceea ce difera in mod special fiind lungimea si campul de date in functie
+de tipul pachetului. Pentru a separa instantierea de implementare, am creat o
+functie care primeste ca parametru tipul cadrului care se doreste instantiat si
+datele care difera, adica numarul de secventa, datele si lungimea. Aceasta functie
+selecteaza cu ajutorul unui switch case tipul de cadru si il instantiaza in mod
+corespunzator.
+
+	De asemenea, ne dorim sa evitam transferul inutil de date. Campul de date
+al cadrului poate contine maxim MAXL(250) octeti, insa de multe ori acestia nu
+sunt folositi. Unele tipuri de cadre precum ACK sau NAK au campul de date vid,
+deci ar fi o risipa sa trimitem cadrul cu dimensiunea actuala. De aceea, am 
+creat o functie care extrage din cadru partea utila si o impacheteaza intr-un
+mesaj care va fi trimis la receiver. Aceasta functie foloseste un buffer local
+pentru copierea temporara a continutului cadrului, foloseste functia memmove
+pentru a muta zona de memorie ce contine campurile check si mark peste zona
+de memorie neutilizata din campul de date si apoi copiaza in campul payload al
+mesajului doar partea utila din buffer.
+================================================================================
+	Sender:
+	
+	In cadrul emitatorului, am creat o functie care incapsuleaza logica de 
+trimitere a mesajelor la receptor. Dupa ce trimitem un mesaj la receptor, 
+asteptam sa primim o confirmare ca a ajuns. Daca aceasta nu vine in timp util
+se genereaza o situatie de tip timeout si se retrimite pachetul. Un pachet nu
+poate fi retransmis de mai mult de 3 ori. Daca se intampla acest lucru, emitatorul
+isi incheie executia. Daca am primit confirmarea, verificam daca este de tip NAK 
+sau ACK. Daca este de tip NAK, inseamna ca pachetul a fost corupt pe drum si 
+trebuie retrimis. Pentru a rezolva situatia, intr-o bucla while vom retrimite 
+pachetul actualizand de fiecare data numarul de secventa si tinand cont de timeout
+pana cand vom primi o confirmare de tip ACK, caz in care pachetul a ajuns cu succes
+si putem trece mai departe. Functia intoarce mesajul primit de la receptor, 
+deoarece avem nevoie de numarul de secventa pentru a mentine ordinea.
+	
+	Ordinea de transmitere a pachetelor este urmatoarea:
+	1.Se transmite pachetul send init pentru a negocia unii parametrii cu 
+receptorul.
+	2.Pentru fiecare fisier in parte, se trimite mai intai un pachet de tip
+file header care contine numele fisierului, apoi se citesc datele din fisier si
+se transmit la receptor pentru a fi scrise in fisierul de iesire si cand se 
+termina de citit se trimite un pachet de tip end of file pentru a indica terminarea
+cu succes a operatiei de transfer.
+	3.La final, dupa ce toate fisierele au fost transmise se transmite pachetul
+end of transmission.
+================================================================================
+	Receiver:
+	
+	La receptor, majoritatea pachetelor se trateaza identic. Se asteapta urmatorul
+mesaj de la emitator. Daca are loc timeout, atunci se retransmite ultimul pachet
+trimis cu succes, care poate fi ACK sau NAK. Daca un pachet se transmite de mai 
+mult de 3 ori receptorul isi incheie executia. 
+
+	Dupa ce un pachet a fost primit se verifica numarul de secventa pentru a vedea
+daca este cel asteptat. Daca primim un numar de secventa gresit, trebuie sa 
+retransmitem ultimul ACK sau NAK pentru a indica emitatorului sa retransmita 
+pachetul cu numarul de secventa corect. Verificarea numarului de secventa este 
+necesara, deoarece cu atatea coruperi si timeouturi este posibil ca un pachet sa
+fie primit de doua ori si deci intr-un fisier sa avem o secventa duplicata. 
+
+	Dupa verificarea numarului de secventa, trebuie sa verificam daca pachetul
+a fost corupt pe drum. Pentru aceasta, recalculam crc pentru campul payload al
+mesajului (care reprezinta de fapt cadrul incapsulat) si il comparam cu crc-ul
+ce a fost extras din payloadul mesajului primit. Daca sunt egale, pachetul a fost
+primit fara erori si se realizeaza procesarile corespunzatoare. Spre exemplu, 
+pentru pachetul de tip file header se creeaza un fisier cu numele din campul data,
+iar pentru pachetul de tip data se scriu datele in fisierul de iesire. Apoi se
+creeaza un cadru de confirmare a primirii corecte de tip ACK care se va incapsula
+intr-un mesaj si va fi trimis mai departe la emitator. Daca pachetul este corupt,
+atunci se creeaza un cadru de infirmare a primirii NAK si se incapsuleaza intr-un 
+mesaj inainte de a fi trimis la emitator. In cazul unui NAK, se asteapta primirea
+aceluiasi pachet cu numar de secventa incrementat, pana cand se primeste corect.
+
+	Toata aceasta secventa de operatii se realizeaza intr-o bucla while, pana cand
+se primeste pachetul de tip EOT, care indica sfarsitul comunicarii si incheierea
+executiei celor doua procese.	
+
+	Ca exceptie la cele descrise mai sus includem pachetul de tip send init.
+Pentru acesta la timeout nu se retransmite nimic, pentru ca oricum nu exista un
+pachet anterior de retransmis, ci se asteapta de inca doua ori primirea pachetului
+altfel se incheie executia. De asemenea, pachetul de confirmare ACK trebuie sa 
+contina in campul de date, ceea ce contine si campul de date al lui send init.
+================================================================================
+	Tratarea numarului de secventa:
+	
+	Acesta este un aspect important de considerat, deoarece timeouturile, coruperile
+si pierderea pachetelor pot cauza desincronizari in ceea ce priveste numerele de
+secventa, ducand la duplicarea informatiei sau scrierea datelor in ordine gresita
+in fisierul de iesire.
+
+	Pentru sender, numarul de secventa asteptat este numarul de secventa al
+pachetului transmis + 1, deoarece receiverul va incrementa numarul de secventa 
+primit pe care il va asocia apoi pachetului de confirmare (ACK sau NAK). In cazul
+in care se primeste un numar de secventa gresit, se retrimite pachetul ce se dorea
+confirmat, si se asteapta primirea pachetului corespunzator.
+
+	Pentru receiver, observam ca numarul de secventa asteptat este mereu par.
+Astfel, putem folosi o variabila locala drept contor pe care o initializam cu 0
+pentru pachetul de tip send init si apoi o marim cu 2 de fiecare data. Daca se
+primeste un pachet cu numar de secventa gresit, atunci se trimite ultima confirmare
+valida si se asteapta primirea pachetului corespunzator.
+================================================================================
+	Probleme legate de timeout:
+	
+	Daca as seta campul LOSS din run_experiment la 0, atunci fisierele in marea
+majoritate a cazurilor s-ar transmite integral. Daca LOSS este 5, fisierele se
+transmit partial, deoarece se intampla ca un pachet sa fie pierdut si retransmis
+de mai mult de 3 ori ceea ce provoaca incheierea executiei receiverului sau a
+senderului. Cum aceasta este specificatia protocolului si pierderea pachetelor
+este generata de canalul de comunicatie, transmiterea incompleta a fisierelor nu
+este din vina implementarii.
+
+	Exista cazuri cand fisierele se transmit complet si corect, desi exista
+situatii de timeout (insa pachetele nu se retransmit mai mult de 3 ori), dar si
+cazuri cand din cauza retransmiterilor niciun fisier nu se copiaza spre exemplu
+pentru ca primul pachet de tip file header n-a ajuns la destinatie si receiverul
+si-a intrerupt executia.
+================================================================================
+	Probleme legate de coruperi multiple:
+	
+	Timpul de transmitere a fisierelor poate fi destul de mare din cauza faptului
+ca pachetele sunt corupte de catre canalul de comunicatie de multe ori, ceea ce
+necesita retransmitere.
+================================================================================
+	Se mai poate intampla ca receiverul sa ruleze la infinit cand secventa primita
+este gresita, dar asta deoarece procesul senderului nu mai functioneaza cum trebuie
+(sau s-a incheiat neasteptat) si atunci receiverul nu are ce pachet primi.
